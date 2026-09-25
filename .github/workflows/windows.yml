@@ -55,25 +55,14 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-gcc
 
-      # TEMPORARY: what the runner actually has.
-      - name: Diagnose the toolchain
-        shell: pwsh
-        run: |
-          Write-Host "action says location=[${{ steps.msys2.outputs.msys2-location }}]"
-          Write-Host "MSYSTEM=$env:MSYSTEM"
-          Get-ChildItem C:\ -Directory -Filter 'msys*' -ErrorAction SilentlyContinue |
-              ForEach-Object { Write-Host "root candidate: $($_.FullName)" }
-          foreach ($root in @('C:\msys64', '${{ steps.msys2.outputs.msys2-location }}') | Where-Object { $_ }) {
-              Write-Host "--- $root ---"
-              Write-Host "  exists: $(Test-Path -LiteralPath $root)"
-              Write-Host "  ucrt64\bin: $(Test-Path -LiteralPath (Join-Path $root 'ucrt64\bin'))"
-              Get-ChildItem (Join-Path $root 'ucrt64\bin') -Filter 'cmake*' -ErrorAction SilentlyContinue |
-                  ForEach-Object { Write-Host "  cmake: $($_.Name)" }
-              try { & (Join-Path $root 'usr\bin\bash.exe') -lc "pacman -Ql mingw-w64-ucrt-x86_64-cmake | grep -i cmake.exe; which cmake; ls /ucrt64 | head" } catch { Write-Host "  bash failed: $_" }
-          }
-
       - name: Build, gather and package
         shell: pwsh
+        env:
+          # The .pc files MSYS2 ships write their prefix the way MSYS2 sees the
+          # tree (`/ucrt64`), which is not a path the compiler, or CMake
+          # checking the directory exists, can open. A sysroot of the MSYS2
+          # root turns every one of those into the real path.
+          PKG_CONFIG_SYSROOT_DIR: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           # Where the action put MSYS2, rather than the C:\msys64 build.ps1
           # assumes: a runner that has to download and extract the base
@@ -86,6 +75,12 @@ jobs:
           # '-Portable\ucrt64\bin\cmake.exe'.
           $arguments = @{ Portable = $true }
           if ('${{ inputs.no_ffmpeg }}' -eq 'true') { $arguments.SkipFfmpeg = $true }
+
+          # TEMPORARY: what pkg-config answers with the sysroot in place.
+          $pkgconf = Join-Path $msys2 'ucrt64\bin\pkgconf.exe'
+          Write-Host "sysroot=$env:PKG_CONFIG_SYSROOT_DIR"
+          Write-Host "prefix: $(& $pkgconf --variable=prefix mpv)"
+          Write-Host "cflags: $(& $pkgconf --cflags mpv)"
 
           if ($msys2) { ./packaging/windows/build.ps1 -Msys2 $msys2 @arguments }
           else { ./packaging/windows/build.ps1 @arguments }
