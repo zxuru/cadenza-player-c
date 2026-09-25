@@ -406,6 +406,43 @@ Flatpak is possible but is a much larger undertaking here, because the KDE
 runtime does not ship libmpv and it would have to be built along with its
 FFmpeg dependency inside the sandbox.
 
+## Releases
+
+A release is a tag, and everything after that is the workflows' job:
+
+```bash
+# The tag and the VERSION in CMakeLists.txt carry the same number.
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+The tag starts `.github/workflows/release.yml`, which
+
+1. refuses to build when the tag and `VERSION` in `CMakeLists.txt` disagree,
+   because the tag is what the filenames, the installer and `--version` will
+   say;
+2. builds the Windows installer and portable zip (`.github/workflows/windows.yml`,
+   on `windows-latest` with MSYS2) and the AppImage
+   (`.github/workflows/linux.yml`, on `ubuntu-24.04`, with Qt fetched from the
+   Qt project since no Ubuntu package meets the 6.5 floor);
+3. tests what was built rather than only that it built — the installer is
+   installed silently and the installed copy is opened, and the AppImage is
+   unpacked and run with a scrubbed environment, so it has to find the Qt,
+   libmpv, TagLib and helper tools inside itself;
+4. publishes a GitHub release named after the tag with those three files and a
+   `SHA256SUMS` beside them, then reads the release back to check that all four
+   landed.
+
+Both platform builds also run by hand from the Actions tab, which is how to get
+an artifact without a tag. macOS is the one platform with no CI: signing and
+notarising need a paid Apple account, so `packaging/macos/README.md` is the
+manual route.
+
+The AppImage links the glibc of the machine that built it — Ubuntu 24.04, glibc
+2.39 — so it wants a 2024-or-newer distribution; Qt, libmpv, TagLib and the
+helper tools are inside the file. Pushes to `main` and pull requests run the same
+Linux job without ffmpeg, which is the fast half of a release.
+
 ## Architecture
 
 ```

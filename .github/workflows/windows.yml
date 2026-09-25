@@ -2,30 +2,35 @@ name: Windows
 
 # Builds the one file a Windows user downloads: cadenza-<version>-setup.exe,
 # with the Qt runtime, libmpv, TagLib, the MinGW runtime, the locale files and
-# the helper tools inside it. Tag a release (v1.0.0) or run it by hand and
-# pick the artifact up from the run.
+# the helper tools inside it.
+#
+# release.yml calls this for a tag; it also runs by hand from the Actions tab,
+# which is how to get the installer without cutting a release.
 #
 # The same thing locally, on a machine with MSYS2:
 #
 #   powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
 
 on:
+  workflow_call:
+    inputs:
+      no_ffmpeg:
+        description: 'Leave ffmpeg out (smaller installer, untagged downloads)'
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       no_ffmpeg:
         description: 'Leave ffmpeg out (smaller installer, untagged downloads)'
         type: boolean
         default: false
-  push:
-    tags:
-      - 'v*'
+
+permissions:
+  contents: read
 
 jobs:
   installer:
     runs-on: windows-latest
-    permissions:
-      # For `gh release create` on a tag; artifacts need nothing of their own.
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -103,6 +108,9 @@ jobs:
               }
           }
 
+          # The version the installer and the filenames carry is the one in
+          # CMakeLists.txt; release.yml is what checks it against the tag.
+          & $exe --version | Write-Host
           & $exe --scan $music --database (Join-Path $env:RUNNER_TEMP 'scan.db')
           if ($LASTEXITCODE -ne 0) { throw "cadenza --scan exited with $LASTEXITCODE" }
 
@@ -120,27 +128,8 @@ jobs:
       - name: Upload the installer
         uses: actions/upload-artifact@v4
         with:
-          name: cadenza-windows
+          name: windows-installer
           if-no-files-found: error
           path: |
             dist/cadenza-*-setup.exe
             dist/cadenza-*-win64-portable.zip
-
-      # On a tag the installer is what users download, so it goes on the
-      # release itself and not only among the run's artifacts. `gh` is on the
-      # runner; GITHUB_TOKEN needs the contents permission set above.
-      - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $files = (Get-ChildItem dist\cadenza-*-setup.exe, dist\cadenza-*-win64-portable.zip).FullName
-          gh release view $env:GITHUB_REF_NAME *> $null
-          if ($LASTEXITCODE -eq 0) {
-              gh release upload $env:GITHUB_REF_NAME @files --clobber
-          } else {
-              gh release create $env:GITHUB_REF_NAME @files --generate-notes --verify-tag
-          }
-          if ($LASTEXITCODE -ne 0) { throw 'gh release failed' }

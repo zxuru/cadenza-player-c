@@ -1,0 +1,23 @@
+name: CI
+
+# Every push to main and every pull request builds the AppImage and runs the
+# smoke test on it, so a break is caught on the branch instead of on the tag.
+#
+# Linux only, and without ffmpeg: it is the fast half of what a release does,
+# and the release builds both platforms in full anyway.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    uses: ./.github/workflows/linux.yml
+    with:
+      no_ffmpeg: true

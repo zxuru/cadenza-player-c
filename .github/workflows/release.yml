@@ -1,0 +1,156 @@
+name: Release
+
+# A release is a tag: push v1.0.1 and this builds both platforms, tests what
+# they produced, and publishes the three files users download plus a
+# SHA256SUMS beside them.
+#
+# The build itself lives in the two platform workflows, which also run by hand
+# from the Actions tab when only the artifact is wanted.
+#
+# Run by hand, this builds the artifacts and publishes nothing: publishing
+# takes the tag, and there is no tag on a branch.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish a release. Only valid when run from a tag.'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # The version in the tag is what the filenames, the installer and the About
+  # box will say, and the version in CMakeLists.txt is what the binary
+  # reports. A release where the two disagree is one where `--version` answers
+  # with a number nobody can find on the release page.
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      publishing: ${{ steps.read.outputs.publishing }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: read
+        name: Read the version and check it against the tag
+        run: |
+          set -euo pipefail
+
+          source_version="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$/\1/p' \
+              CMakeLists.txt | head -1)"
+          if [[ -z "${source_version}" ]]; then
+              echo 'error: no version in the project() call of CMakeLists.txt' >&2
+              exit 1
+          fi
+
+          if [[ "${GITHUB_REF_TYPE}" == 'tag' ]]; then
+              tag_version="${GITHUB_REF_NAME#v}"
+              if [[ "${tag_version}" != "${source_version}" ]]; then
+                  echo "error: ${GITHUB_REF_NAME} says ${tag_version}, CMakeLists.txt says ${source_version}" >&2
+                  echo '       bump the VERSION in CMakeLists.txt, or tag that commit' >&2
+                  exit 1
+              fi
+              echo 'publishing=true' >> "$GITHUB_OUTPUT"
+          else
+              if [[ "${{ inputs.publish }}" == 'true' ]]; then
+                  echo 'error: publishing needs a tag: check one out, or leave publish off' >&2
+                  exit 1
+              fi
+              echo "note: ${GITHUB_REF_NAME} is not a tag; building ${source_version}, publishing nothing" >&2
+              echo 'publishing=false' >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "    version ${source_version}"
+          echo "version=${source_version}" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: version
+    uses: ./.github/workflows/linux.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
+  windows:
+    needs: version
+    uses: ./.github/workflows/windows.yml
+
+  publish:
+    needs: [version, linux, windows]
+    if: needs.version.outputs.publishing == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      # For `gh release create`; nothing else in this workflow writes.
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Every file that lands on a release is named here, and nothing else is
+      # allowed through: an artifact that shows up unannounced means a build
+      # step wrote somewhere it should not have.
+      - name: Collect the assets
+        run: |
+          set -euo pipefail
+
+          version="${{ needs.version.outputs.version }}"
+          expected=(
+              "cadenza-${version}-setup.exe"
+              "cadenza-${version}-win64-portable.zip"
+              "cadenza-${version}-x86_64.AppImage"
+          )
+
+          for name in "${expected[@]}"; do
+              if [[ ! -f "dist/${name}" ]]; then
+                  echo "error: ${name} was not built:" >&2
+                  ls -l dist >&2
+                  exit 1
+              fi
+          done
+
+          for path in dist/*; do
+              name="$(basename "${path}")"
+              if [[ ! " ${expected[*]} " == *" ${name} "* ]]; then
+                  echo "error: dist/${name} is an artifact nothing publishes" >&2
+                  exit 1
+              fi
+          done
+
+          ( cd dist && sha256sum "${expected[@]}" > SHA256SUMS )
+          cat dist/SHA256SUMS
+
+          echo "EXPECTED_ASSETS=${expected[*]}" >> "$GITHUB_ENV"
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+              --title "Cadenza ${{ needs.version.outputs.version }}" \
+              --verify-tag \
+              --generate-notes \
+              --latest \
+              dist/cadenza-* dist/SHA256SUMS
+
+      # What was published, read back: an upload that quietly dropped a file
+      # is the kind of failure a release page shows the world.
+      - name: Check what the release carries
+        run: |
+          set -euo pipefail
+          want="$(printf '%s\n' ${EXPECTED_ASSETS} SHA256SUMS | sort | xargs)"
+          got="$(gh release view "${GITHUB_REF_NAME}" --json assets \
+              --jq '[.assets[].name] | sort | join(" ")')"
+          if [[ "${got}" != "${want}" ]]; then
+              echo "error: the release carries '${got}', expected '${want}'" >&2
+              exit 1
+          fi
+          echo "    ${got}"
+          echo "    https://github.com/${GH_REPO}/releases/tag/${GITHUB_REF_NAME}"

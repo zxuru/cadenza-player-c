@@ -1,0 +1,232 @@
+name: Linux
+
+# Builds the file Linux users download: one AppImage with the Qt runtime,
+# libmpv, TagLib and the helper tools inside it, smoke-tested by unpacking it
+# and running it with no Qt on PATH.
+#
+# release.yml calls this for a tag; it also runs by hand from the Actions tab,
+# which is how to get the artifact without cutting a release.
+#
+# The same thing locally:
+#
+#   packaging/tools/fetch-tools.sh --ffmpeg
+#   packaging/linux/build-appimage.sh          # linuxdeploy + its Qt plugin on PATH
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version the AppImage filename carries (default: CMakeLists.txt)'
+        type: string
+        default: ''
+      no_ffmpeg:
+        description: 'Leave ffmpeg out (smaller AppImage, untagged downloads)'
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version the AppImage filename carries (default: the one in CMakeLists.txt)'
+        default: ''
+      no_ffmpeg:
+        description: 'Leave ffmpeg out (smaller AppImage, untagged downloads)'
+        type: boolean
+        default: false
+
+env:
+  # Qt 6.5 is the floor CMakeLists.txt states and no Ubuntu package meets it,
+  # so Qt comes from the Qt project's own binaries. Pinned, because the
+  # package is built against it: a moving version would make two runs of the
+  # same commit produce different files.
+  QT_VERSION: 6.10.3
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    # 24.04 and not 22.04: the README's floors are libmpv 0.37 and TagLib 1.13
+    # and 22.04 ships neither (0.34 and 1.12), so an AppImage built there
+    # would bundle libraries the project does not support. Pinned rather than
+    # `ubuntu-latest`, because the runner's glibc becomes the floor the
+    # shipped file demands of the machine it lands on.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # aqtinstall fetches the same release the online installer serves:
+      # qtbase, qtdeclarative and qtsvg, which is the whole list.
+      - name: Qt ${{ env.QT_VERSION }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet aqtinstall
+          "${HOME}/.local/bin/aqt" install-qt linux desktop "${QT_VERSION}" linux_gcc_64 \
+              --outputdir "${HOME}/Qt" | tail -3
+
+          qt_root="${HOME}/Qt/${QT_VERSION}/gcc_64"
+          echo "${qt_root}/bin" >> "$GITHUB_PATH"
+          {
+              echo "QT_ROOT_DIR=${qt_root}"
+              echo "CMAKE_PREFIX_PATH=${qt_root}"
+              # build-appimage.sh hands this to linuxdeploy-plugin-qt, which
+              # asks qmake where Qt is instead of guessing.
+              echo "QMAKE=${qt_root}/bin/qmake6"
+          } >> "$GITHUB_ENV"
+
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+              build-essential cmake pkg-config \
+              libmpv-dev libtag1-dev \
+              libgl1-mesa-dev libegl1-mesa-dev \
+              libxkbcommon-dev libfontconfig1 libfreetype6 libdbus-1-3 \
+              libfuse2 file xz-utils
+
+      # What the package is allowed to be built against, checked rather than
+      # assumed: the AppImage carries the libmpv and TagLib of the machine
+      # that built it, so an older one would ship libraries the project does
+      # not support.
+      - name: Library floors
+        run: |
+          set -euo pipefail
+          require() {
+              local package="$1" minimum="$2" found
+              found="$(pkg-config --modversion "${package}")"
+              if [[ "$(printf '%s\n%s\n' "${minimum}" "${found}" | sort -V | head -1)" != "${minimum}" ]]; then
+                  echo "error: ${package} ${found} is older than the ${minimum} the README requires" >&2
+                  exit 1
+              fi
+              echo "    ${package} ${found}"
+          }
+          qt="$(qmake6 -query QT_VERSION)"
+          [[ "$(printf '%s\n%s\n' 6.5 "${qt}" | sort -V | head -1)" == "6.5" ]] || {
+              echo "error: Qt ${qt} is older than the 6.5 the README requires" >&2
+              exit 1
+          }
+          echo "    Qt ${qt}"
+          require mpv 0.37
+          require taglib 1.13
+
+      - name: Stage the helper tools
+        run: |
+          if [[ "${{ inputs.no_ffmpeg }}" == 'true' ]]; then
+              packaging/tools/fetch-tools.sh
+          else
+              packaging/tools/fetch-tools.sh --ffmpeg
+          fi
+
+      # linuxdeploy and its Qt plugin are AppImages themselves, and the
+      # mounts they normally use are not always available on a runner, which
+      # is what APPIMAGE_EXTRACT_AND_RUN is for.
+      - name: linuxdeploy
+        run: |
+          set -euo pipefail
+          install -d "${HOME}/.local/bin"
+          for tool in linuxdeploy linuxdeploy-plugin-qt; do
+              curl --fail --location --silent --show-error \
+                  --output "${HOME}/.local/bin/${tool}" \
+                  "https://github.com/linuxdeploy/${tool}/releases/download/continuous/${tool}-x86_64.AppImage"
+              chmod +x "${HOME}/.local/bin/${tool}"
+          done
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build the AppImage
+        env:
+          LINUXDEPLOY_OUTPUT_VERSION: ${{ inputs.version }}
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          set -euo pipefail
+          packaging/linux/build-appimage.sh
+          ls -l dist
+
+      # The artifact is what ships, so the artifact is what is tested. The
+      # file is unpacked first: the runner has Qt and libmpv installed, so a
+      # run that reached for those instead of the copies inside the AppImage
+      # would pass while the AppImage itself was broken.
+      - name: Smoke test the AppImage
+        run: |
+          set -euo pipefail
+
+          appimage="$(ls dist/*.AppImage)"
+          name="$(basename "${appimage}")"
+          version="$(sed -E 's/^cadenza-(.+)-x86_64\.AppImage$/\1/' <<< "${name}")"
+          if [[ "${version}" == "${name}" ]]; then
+              echo "error: ${name} is not named cadenza-<version>-x86_64.AppImage" >&2
+              exit 1
+          fi
+
+          work="$(mktemp -d)"
+          mkdir -p "${work}/music"
+
+          APPIMAGE_EXTRACT_AND_RUN=1 ./"${appimage}" --appimage-extract >/dev/null
+
+          # What the file promises: the runtime it carries, the plugins that
+          # make it work (the sqlite driver behind the index, the Qt Quick
+          # Controls Basic style the interface asks for, a platform plugin)
+          # and the tools the music search shells out to.
+          for library in libQt6Core libQt6Quick libQt6Sql libmpv libtag; do
+              find squashfs-root -name "${library}*.so*" | grep -q . || {
+                  echo "error: ${library} is not inside the AppImage" >&2
+                  exit 1
+              }
+          done
+          for plugin in libqsqlite.so libqoffscreen.so QtQuick/Controls/Basic/qmldir; do
+              find squashfs-root -path "*${plugin}" | grep -q . || {
+                  echo "error: ${plugin} is not inside the AppImage" >&2
+                  exit 1
+              }
+          done
+
+          tools=(yt-dlp qjs)
+          if [[ "${{ inputs.no_ffmpeg }}" != 'true' ]]; then
+              tools+=(ffmpeg)
+          fi
+          for tool in "${tools[@]}"; do
+              test -x "squashfs-root/usr/bin/tools/${tool}" || {
+                  echo "error: ${tool} is not staged inside the AppImage" >&2
+                  exit 1
+              }
+          done
+
+          # A scrubbed environment: no Qt on PATH, no import paths exported,
+          # HOME pointed at a scratch directory. Whatever the application
+          # needs it has to find inside the file.
+          app=(env -i HOME="${work}" PATH=/usr/bin:/bin LANG=C.UTF-8
+               APPIMAGE_EXTRACT_AND_RUN=1
+               QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software
+               ./"${appimage}")
+
+          status=0
+          reported="$(timeout --signal=TERM 60 "${app[@]}" --version)" || status=$?
+          [[ "${status}" -eq 0 ]] || { echo "error: --version exited with ${status}" >&2; exit 1; }
+          echo "    ${reported}"
+          [[ "${reported}" == *"${version}"* ]] || {
+              echo "error: the AppImage is named ${version} but reports '${reported}'" >&2
+              exit 1
+          }
+
+          status=0
+          timeout --signal=TERM 60 "${app[@]}" --check-i18n || status=$?
+          [[ "${status}" -eq 0 ]] || { echo "error: --check-i18n exited with ${status}" >&2; exit 1; }
+
+          status=0
+          timeout --signal=TERM 60 "${app[@]}" --scan "${work}/music" --database "${work}/scan.db" || status=$?
+          [[ "${status}" -eq 0 ]] || { echo "error: --scan exited with ${status}" >&2; exit 1; }
+
+          # The window: a missing QML module or a plugin the engine cannot
+          # load makes it fail and the process exit, so being alive after
+          # twenty seconds is the assertion.
+          status=0
+          timeout --signal=TERM 20 "${app[@]}" "${work}/music" --database "${work}/gui.db" || status=$?
+          [[ "${status}" -eq 124 ]] || {
+              echo "error: the interface did not come up (exit ${status})" >&2
+              exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          if-no-files-found: error
+          path: dist/*.AppImage
