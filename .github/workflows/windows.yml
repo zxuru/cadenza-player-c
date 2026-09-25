@@ -55,14 +55,44 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-gcc
 
+      # MSYS2 writes its .pc files the way MSYS2 sees its own tree (`/ucrt64`),
+      # and on a runner the toolchain is extracted under a temporary
+      # directory: pkg-config answers with a path CMake cannot open, and the
+      # build stops at "PkgConfig::MPV includes non-existent path
+      # /ucrt64/include". This is the one .pc file the build asks for -- TagLib
+      # is found through its CMake package. The paths below are the real ones,
+      # written out rather than derived, so nothing has to relocate anything;
+      # the version comes from MSYS2's copy of the same file.
+      - name: Point pkg-config at the toolchain
+        shell: pwsh
+        run: |
+          $msys2 = '${{ steps.msys2.outputs.msys2-location }}'
+          $prefix = ($msys2 -replace '\\', '/') + '/ucrt64'
+
+          $upstream = Join-Path $msys2 'ucrt64\lib\pkgconfig\mpv.pc'
+          $match = Select-String -LiteralPath $upstream -Pattern '^Version:\s*(.+)$'
+          if (-not $match) { throw "no version in $upstream" }
+          $version = $match.Matches[0].Groups[1].Value.Trim()
+
+          $pcdir = Join-Path $env:RUNNER_TEMP 'pkgconfig'
+          New-Item -ItemType Directory -Force -Path $pcdir | Out-Null
+
+          @"
+          libdir=$prefix/lib
+          includedir=$prefix/include
+
+          Name: mpv
+          Description: mpv media player client library
+          Version: $version
+          Libs: -L`${libdir} -lmpv
+          Cflags: -I`${includedir}
+          "@ | Set-Content -Encoding ascii -NoNewline (Join-Path $pcdir 'mpv.pc')
+
+          "PKG_CONFIG_PATH=$pcdir" >> $env:GITHUB_ENV
+          Write-Host "    mpv $version, from $pcdir"
+
       - name: Build, gather and package
         shell: pwsh
-        env:
-          # The .pc files MSYS2 ships write their prefix the way MSYS2 sees the
-          # tree (`/ucrt64`), which is not a path the compiler, or CMake
-          # checking the directory exists, can open. A sysroot of the MSYS2
-          # root turns every one of those into the real path.
-          PKG_CONFIG_SYSROOT_DIR: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           # Where the action put MSYS2, rather than the C:\msys64 build.ps1
           # assumes: a runner that has to download and extract the base
@@ -75,12 +105,6 @@ jobs:
           # '-Portable\ucrt64\bin\cmake.exe'.
           $arguments = @{ Portable = $true }
           if ('${{ inputs.no_ffmpeg }}' -eq 'true') { $arguments.SkipFfmpeg = $true }
-
-          # TEMPORARY: what pkg-config answers with the sysroot in place.
-          $pkgconf = Join-Path $msys2 'ucrt64\bin\pkgconf.exe'
-          Write-Host "sysroot=$env:PKG_CONFIG_SYSROOT_DIR"
-          Write-Host "prefix: $(& $pkgconf --variable=prefix mpv)"
-          Write-Host "cflags: $(& $pkgconf --cflags mpv)"
 
           if ($msys2) { ./packaging/windows/build.ps1 -Msys2 $msys2 @arguments }
           else { ./packaging/windows/build.ps1 @arguments }

@@ -67,16 +67,28 @@ jobs:
           qt_root="${HOME}/Qt/${QT_VERSION}/gcc_64"
           echo "${qt_root}/bin" >> "$GITHUB_PATH"
 
-          # The plugin deploys every plugin of the Qt installation for the
-          # modules the application uses, and of the SQL drivers only sqlite's
-          # is wanted: the others (mimer, ibase, oci, odbc, mysql, psql)
-          # reference client libraries that are not installed and cannot be
-          # bundled, and linuxdeploy stops at the first one it cannot resolve.
-          # Trimmed here rather than in the Qt installation's place in a
-          # distribution, which a build has no business editing.
-          for driver in "${qt_root}"/plugins/sqldrivers/*.so; do
+          # A second view of the same tree, and the one the packaging step is
+          # pointed at. linuxdeploy-plugin-qt deploys every plugin of the
+          # modules the application uses, and among the SQL drivers it then
+          # deploys, only sqlite's has dependencies that exist: mimer's client
+          # library is proprietary and the others are not installed, so the
+          # walk stops at the first one it cannot resolve. The NetworkManager
+          # plugin goes for the same reason -- it links libnm. Hard links, so
+          # this costs no disk and no time, and the real Qt stays untouched:
+          # the build needs it whole, since Qt6Sql's CMake package validates
+          # the very plugin files this view leaves out.
+          qt_view="${HOME}/qt-for-packaging"
+          rm -rf "${qt_view}"
+          cp -al "${qt_root}" "${qt_view}"
+
+          for driver in "${qt_view}"/plugins/sqldrivers/*.so; do
               [[ "$(basename "${driver}")" != 'libqsqlite.so' ]] && rm -f "${driver}"
           done
+          rm -f "${qt_view}"/plugins/networkinformation/*.so
+
+          # qmake is asked where Qt is from this view, not from wherever the
+          # binary's own prefix points.
+          printf '[Paths]\nPrefix=..\n' > "${qt_view}/bin/qt.conf"
 
           {
               echo "QT_ROOT_DIR=${qt_root}"
@@ -87,7 +99,7 @@ jobs:
               echo "LD_LIBRARY_PATH=${qt_root}/lib"
               # build-appimage.sh hands this to linuxdeploy-plugin-qt, which
               # asks qmake where Qt is instead of guessing.
-              echo "QMAKE=${qt_root}/bin/qmake6"
+              echo "QMAKE=${qt_view}/bin/qmake6"
           } >> "$GITHUB_ENV"
 
       - name: Build dependencies
