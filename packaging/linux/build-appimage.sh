@@ -77,6 +77,16 @@ linuxdeploy \
     --icon-file "${appdir}/usr/share/icons/hicolor/scalable/apps/cadenza.svg" \
     --output appimage
 
+# linuxdeploy names the file after the desktop entry's Name field, which is
+# `Cadenza`; the file a user downloads is named the way the project is named
+# everywhere else. The desktop entry keeps the capital: that one is the name
+# a launcher shows.
+for built in ./*.AppImage; do
+    name="${built#./}"
+    lowercase="$(printf '%s' "${name%.AppImage}" | tr '[:upper:]' '[:lower:]').AppImage"
+    [[ "${name}" == "${lowercase}" ]] || mv "${built}" "${lowercase}"
+done
+
 mv ./*.AppImage "${repo_root}/dist/" 2>/dev/null || {
     mkdir -p "${repo_root}/dist"
     mv ./*.AppImage "${repo_root}/dist/"
