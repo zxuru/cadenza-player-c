@@ -434,9 +434,10 @@ The tag starts `.github/workflows/release.yml`, which
    landed.
 
 Both platform builds also run by hand from the Actions tab, which is how to get
-an artifact without a tag. macOS is the one platform with no CI: signing and
-notarising need a paid Apple account, so `packaging/macos/README.md` is the
-manual route.
+an artifact without a tag; a hand run of `release.yml` does everything a tag
+does except publish, the check of what was built included. macOS is the one
+platform with no CI: signing and notarising need a paid Apple account, so
+`packaging/macos/README.md` is the manual route.
 
 The AppImage links the glibc of the machine that built it — Ubuntu 24.04, glibc
 2.39 — so it wants a 2024-or-newer distribution; Qt, libmpv, TagLib and the

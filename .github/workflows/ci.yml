@@ -16,6 +16,11 @@ on:
 permissions:
   contents: read
 
+# A newer push makes the run in progress pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   appimage:
     uses: ./.github/workflows/linux.yml

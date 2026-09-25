@@ -7,8 +7,9 @@ name: Release
 # The build itself lives in the two platform workflows, which also run by hand
 # from the Actions tab when only the artifact is wanted.
 #
-# Run by hand, this builds the artifacts and publishes nothing: publishing
-# takes the tag, and there is no tag on a branch.
+# Run by hand, this builds both platforms and checks what they produced the
+# way a tag would -- the names, the set, the hashes -- and publishes nothing:
+# publishing takes the tag, and there is no tag on a branch.
 
 on:
   push:
@@ -79,9 +80,11 @@ jobs:
     needs: version
     uses: ./.github/workflows/windows.yml
 
-  publish:
+  # Runs on a tag and on a hand run alike: what would be published is
+  # collected and hashed either way, and only the release itself is held back
+  # when there is no tag.
+  release:
     needs: [version, linux, windows]
-    if: needs.version.outputs.publishing == 'true'
     runs-on: ubuntu-24.04
     permissions:
       # For `gh release create`; nothing else in this workflow writes.
@@ -131,18 +134,40 @@ jobs:
           echo "EXPECTED_ASSETS=${expected[*]}" >> "$GITHUB_ENV"
 
       - name: Publish
+        if: needs.version.outputs.publishing == 'true'
         run: |
           set -euo pipefail
+
+          version="${{ needs.version.outputs.version }}"
+          # Prepended to the generated notes: the release page is where a user
+          # finds out which of the three files is theirs.
+          cat > notes.md <<EOF
+          One file per platform; \`SHA256SUMS\` covers all three.
+
+          | File | What it is |
+          |---|---|
+          | \`cadenza-${version}-setup.exe\` | Windows: everything inside, double-click to install |
+          | \`cadenza-${version}-win64-portable.zip\` | Windows: unzip and run, no installer |
+          | \`cadenza-${version}-x86_64.AppImage\` | Linux: \`chmod +x\` and run, nothing to install |
+
+          The AppImage is built on Ubuntu 24.04 and carries Qt, libmpv, TagLib
+          and the helper tools; it wants glibc 2.39 or newer, which is
+          Ubuntu 24.04 and anything released after it. macOS is not built here
+          -- see [packaging/macos](https://github.com/${GH_REPO}/blob/main/packaging/macos/README.md).
+          EOF
+
           gh release create "${GITHUB_REF_NAME}" \
-              --title "Cadenza ${{ needs.version.outputs.version }}" \
+              --title "Cadenza ${version}" \
               --verify-tag \
               --generate-notes \
+              --notes-file notes.md \
               --latest \
               dist/cadenza-* dist/SHA256SUMS
 
       # What was published, read back: an upload that quietly dropped a file
       # is the kind of failure a release page shows the world.
       - name: Check what the release carries
+        if: needs.version.outputs.publishing == 'true'
         run: |
           set -euo pipefail
           want="$(printf '%s\n' ${EXPECTED_ASSETS} SHA256SUMS | sort | xargs)"
