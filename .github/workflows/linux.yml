@@ -85,8 +85,22 @@ jobs:
               build-essential cmake pkg-config \
               libmpv-dev libtag1-dev \
               libgl1-mesa-dev libegl1-mesa-dev \
-              libxkbcommon-dev libfontconfig1 libfreetype6 libdbus-1-3 \
-              libfuse2 file xz-utils
+              file xz-utils libfuse2
+
+          # linuxdeploy resolves the dependency closure of every plugin it
+          # deploys, the xcb and wayland platform plugins included, and fails
+          # on the first library it cannot find even though the package
+          # carries its own copy of it.
+          sudo apt-get install --yes --no-install-recommends \
+              libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0t64 \
+              libxkbcommon0 libxkbcommon-x11-0 libx11-xcb1 \
+              libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 \
+              libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+              libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 \
+              libxcb-xinerama0 libxcb-xinput0 libxcb-xkb1 \
+              libsm6 libice6 libxi6 libxtst6 libxcursor1 libxrandr2 \
+              libxrender1 libxfixes3 libxv1 \
+              libwayland-client0 libwayland-cursor0 libwayland-egl1 libdecor-0-0
 
       # What the package is allowed to be built against, checked rather than
       # assumed: the AppImage carries the libmpv and TagLib of the machine
