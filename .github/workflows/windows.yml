@@ -57,8 +57,12 @@ jobs:
       - name: Build, gather and package
         shell: pwsh
         run: |
-          $arguments = @('-Portable')
-          if ('${{ inputs.no_ffmpeg }}' -eq 'true') { $arguments += '-SkipFfmpeg' }
+          # A hashtable and not an array: splatting '-Portable' as an array
+          # element hands it to the script as a positional value, which is how
+          # it ended up in -Msys2 and the build went looking for
+          # '-Portable\ucrt64\bin\cmake.exe'.
+          $arguments = @{ Portable = $true }
+          if ('${{ inputs.no_ffmpeg }}' -eq 'true') { $arguments.SkipFfmpeg = $true }
           ./packaging/windows/build.ps1 @arguments
 
       # The package is only worth shipping if the copy the installer puts on
