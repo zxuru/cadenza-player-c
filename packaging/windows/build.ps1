@@ -193,27 +193,42 @@ Invoke-Checked $windeployqt @(
 # a missing DLL is a silent failure to start, not an error message.
 Write-Host '==> library closure'
 $copied = New-Object System.Collections.Generic.List[string]
-for ($pass = 1; $pass -le 3; $pass++) {
-    $lines = & $ntldd -R $exe
+# Every executable and library in the tree and not only the application: the
+# Qt plugins carry dependencies of their own, and they are deployed into
+# subdirectories of their own. The sqlite driver is the one that matters --
+# it needs libsqlite3-0.dll, nothing else in the package references it, and
+# without it the app starts and cannot open its library index.
+$walked = New-Object System.Collections.Generic.HashSet[string]
+for ($pass = 1; $pass -le 4; $pass++) {
     $added = 0
-    foreach ($line in $lines) {
-        if ($line -notmatch '=>\s*([A-Za-z]:\\[^()]+?)\s*\(0x') { continue }
-        $resolved = $Matches[1].Trim()
-        if (-not $resolved.StartsWith($Bin, [StringComparison]::OrdinalIgnoreCase)) { continue }
-        $name = [IO.Path]::GetFileName($resolved)
-        $target = Join-Path $DistDir "bin\$name"
-        if (Test-Path -LiteralPath $target) { continue }
-        Copy-Item -LiteralPath $resolved -Destination $target
-        $copied.Add($name)
-        $added++
+    foreach ($binary in Get-ChildItem -LiteralPath (Join-Path $DistDir 'bin') -Recurse -File |
+                 Where-Object { $_.Extension -in '.exe', '.dll' }) {
+        if (-not $walked.Add($binary.FullName)) { continue }
+        foreach ($line in (& $ntldd -R $binary.FullName)) {
+            if ($line -notmatch '=>\s*([A-Za-z]:\\[^()]+?)\s*\(0x') { continue }
+            $resolved = $Matches[1].Trim()
+            if (-not $resolved.StartsWith($Bin, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $name = [IO.Path]::GetFileName($resolved)
+            $target = Join-Path $DistDir "bin\$name"
+            if (Test-Path -LiteralPath $target) { continue }
+            Copy-Item -LiteralPath $resolved -Destination $target
+            $copied.Add($name)
+            $added++
+        }
     }
     if ($added -eq 0) { break }
 }
 $copied | Sort-Object -Unique | ForEach-Object { Write-Host "    + $_" }
 
-$unresolved = @(& $ntldd -R $exe | Select-String -Pattern 'not found' -SimpleMatch |
-    ForEach-Object { ($_.Line -replace '\s*=>.*', '').Trim() } |
-    Where-Object { $_ -and $_ -notmatch '^(api-ms-|ext-ms-)' })
+$unresolved = @(
+    Get-ChildItem -LiteralPath (Join-Path $DistDir 'bin') -Recurse -File |
+        Where-Object { $_.Extension -in '.exe', '.dll' } |
+        ForEach-Object { & $ntldd -R $_.FullName } |
+        Select-String -Pattern 'not found' -SimpleMatch |
+        ForEach-Object { ($_.Line -replace '\s*=>.*', '').Trim() } |
+        Where-Object { $_ -and $_ -notmatch '^(api-ms-|ext-ms-)' } |
+        Sort-Object -Unique
+)
 if ($unresolved.Count -gt 0) {
     Write-Warning "ntldd could not resolve: $($unresolved -join ', ')"
 }

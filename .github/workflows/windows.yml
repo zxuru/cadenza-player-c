@@ -158,9 +158,19 @@ jobs:
 
           # The version the installer and the filenames carry is the one in
           # CMakeLists.txt; release.yml is what checks it against the tag.
-          & $exe --version | Write-Host
-          & $exe --scan $music --database (Join-Path $env:RUNNER_TEMP 'scan.db')
-          if ($LASTEXITCODE -ne 0) { throw "cadenza --scan exited with $LASTEXITCODE" }
+          #
+          # Start-Process and not `&`: PowerShell does not wait for an
+          # executable built for the GUI subsystem, so --scan's exit code
+          # never reached $LASTEXITCODE and a scan that failed on its own
+          # library would have gone unnoticed. It is the first thing this
+          # application does, and it is why the DLL closure is walked over
+          # the whole tree: the sqlite driver needs libsqlite3-0.dll.
+          $version = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList '--version'
+          if ($version.ExitCode -ne 0) { throw "cadenza --version exited with $($version.ExitCode)" }
+
+          $scan = Start-Process -FilePath $exe -Wait -PassThru `
+              -ArgumentList '--scan', $music, '--database', (Join-Path $env:RUNNER_TEMP 'scan.db')
+          if ($scan.ExitCode -ne 0) { throw "cadenza --scan exited with $($scan.ExitCode)" }
 
           # The window itself: a missing QML module makes the engine fail and
           # the process exit, so staying alive for ten seconds is the
