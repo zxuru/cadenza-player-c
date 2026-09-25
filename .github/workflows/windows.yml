@@ -166,11 +166,25 @@ jobs:
           # the process exit, so staying alive for ten seconds is the
           # assertion. The runner has a session, so it is the real platform
           # plugin doing the work -- only qwindows.dll is deployed.
+          #
+          # A GUI executable has no console, and Qt writes its warnings to the
+          # debugger when it thinks there is none; this makes it write to a
+          # file instead, which is the difference between "the interface did
+          # not come up" and knowing why.
+          $env:QT_ASSUME_STDERR_HAS_CONSOLE = '1'
+          $guiErr = Join-Path $env:RUNNER_TEMP 'gui.err.txt'
           $app = Start-Process -FilePath $exe -PassThru `
+              -RedirectStandardError $guiErr `
               -ArgumentList $music, '--database', (Join-Path $env:RUNNER_TEMP 'gui.db')
           Start-Sleep -Seconds 10
           $app.Refresh()
-          if ($app.HasExited) { throw "the interface did not come up (exit $($app.ExitCode))" }
+          if ($app.HasExited) {
+              Get-Content -LiteralPath $guiErr -ErrorAction SilentlyContinue | Write-Host
+              Write-Host 'QML modules in the installed copy:'
+              Get-ChildItem -LiteralPath (Join-Path $install 'qml') -Recurse -Filter 'qmldir' -ErrorAction SilentlyContinue |
+                  ForEach-Object { Write-Host "    $($_.Directory.FullName.Replace($install, ''))" }
+              throw "the interface did not come up (exit $($app.ExitCode))"
+          }
           $app.Kill()
 
       - name: Upload the installer
