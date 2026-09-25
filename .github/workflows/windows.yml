@@ -109,21 +109,66 @@ jobs:
           if ($msys2) { ./packaging/windows/build.ps1 -Msys2 $msys2 @arguments }
           else { ./packaging/windows/build.ps1 @arguments }
 
-      # The package is only worth shipping if the copy the installer puts on
-      # a machine runs: the assertions below install it silently, check the
-      # runtime files the app cannot do without, open the index (Qt, the
-      # sqlite driver, TagLib, libmpv) and bring the interface up.
+      # The package is only worth shipping if what it puts on a machine runs:
+      # the checks below open the index (Qt, the sqlite driver, TagLib,
+      # libmpv), install the package silently, and bring the interface up out
+      # of the installed copy. Nothing here waits without a deadline and every
+      # step says where it is, because a runner that sits for forty minutes
+      # with a silent log says nothing about why.
       - name: Smoke test the installed copy
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
+          $out = Join-Path $env:RUNNER_TEMP 'cadenza.out.txt'
+          $err = Join-Path $env:RUNNER_TEMP 'cadenza.err.txt'
+
+          function Invoke-Cadenza {
+              param([string]$Exe, [string[]]$Arguments, [int]$Seconds = 180)
+              Write-Host "==> $([IO.Path]::GetFileName($Exe)) $($Arguments -join ' ')"
+              $process = Start-Process -FilePath $Exe -PassThru -ArgumentList $Arguments `
+                  -RedirectStandardOutput $out -RedirectStandardError $err
+              if (-not $process.WaitForExit($Seconds * 1000)) {
+                  $process.Kill()
+                  Get-Content -LiteralPath $err -ErrorAction SilentlyContinue | Write-Host
+                  throw "$($Arguments[0]) did not finish within ${Seconds}s"
+              }
+              Get-Content -LiteralPath $err -ErrorAction SilentlyContinue | Write-Host
+              if ($process.ExitCode -ne 0) {
+                  throw "$($Arguments[0]) exited with $($process.ExitCode)"
+              }
+          }
+
+          $music = Join-Path $env:RUNNER_TEMP 'music'
+          New-Item -ItemType Directory -Force -Path $music | Out-Null
+
+          # A GUI executable has no console, and Qt writes its warnings to the
+          # debugger when it thinks there is none; this makes it write to the
+          # files above instead, which is the difference between "it did not
+          # work" and knowing why.
+          $env:QT_ASSUME_STDERR_HAS_CONSOLE = '1'
+
+          # The payload first, out of the build tree, because it is the one
+          # thing the installer does not change: this is where opening the
+          # library index is checked, and it is why the DLL closure is walked
+          # over the whole tree -- the sqlite driver needs libsqlite3-0.dll,
+          # and nothing else in the package references it.
+          $payload = Join-Path (Resolve-Path 'dist\bin').Path 'cadenza.exe'
+          Invoke-Cadenza -Exe $payload -Arguments @('--version')
+          Invoke-Cadenza -Exe $payload -Arguments @('--scan', $music,
+              '--database', (Join-Path $env:RUNNER_TEMP 'payload.db'))
+
           $setup = Get-ChildItem dist\cadenza-*-setup.exe | Select-Object -First 1
           if (-not $setup) { throw 'no installer was built' }
 
+          Write-Host "==> installing $($setup.Name)"
           $install = Join-Path $env:RUNNER_TEMP 'cadenza'
-          $installer = Start-Process -FilePath $setup.FullName -Wait -PassThru `
+          $installer = Start-Process -FilePath $setup.FullName -PassThru `
               -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$install"
+          if (-not $installer.WaitForExit(600 * 1000)) {
+              $installer.Kill()
+              throw 'the installer did not finish within ten minutes'
+          }
           if ($installer.ExitCode -ne 0) { throw "the installer exited with $($installer.ExitCode)" }
 
           $exe = Join-Path $install 'cadenza.exe'
@@ -140,9 +185,6 @@ jobs:
               }
           }
 
-          $music = Join-Path $env:RUNNER_TEMP 'music'
-          New-Item -ItemType Directory -Force -Path $music | Out-Null
-
           # The Qt pieces the app cannot work without, in the places
           # windeployqt puts them: the platform plugin Qt loads before
           # anything else, the sqlite driver behind the library index, the
@@ -156,45 +198,24 @@ jobs:
               }
           }
 
-          # The version the installer and the filenames carry is the one in
-          # CMakeLists.txt; release.yml is what checks it against the tag.
-          #
-          # Start-Process and not `&`: PowerShell does not wait for an
-          # executable built for the GUI subsystem, so --scan's exit code
-          # never reached $LASTEXITCODE and a scan that failed on its own
-          # library would have gone unnoticed. It is the first thing this
-          # application does, and it is why the DLL closure is walked over
-          # the whole tree: the sqlite driver needs libsqlite3-0.dll.
-          $version = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList '--version'
-          if ($version.ExitCode -ne 0) { throw "cadenza --version exited with $($version.ExitCode)" }
-
-          $scan = Start-Process -FilePath $exe -Wait -PassThru `
-              -ArgumentList '--scan', $music, '--database', (Join-Path $env:RUNNER_TEMP 'scan.db')
-          if ($scan.ExitCode -ne 0) { throw "cadenza --scan exited with $($scan.ExitCode)" }
-
           # The window itself: a missing QML module makes the engine fail and
           # the process exit, so staying alive for ten seconds is the
           # assertion. The runner has a session, so it is the real platform
           # plugin doing the work -- only qwindows.dll is deployed.
-          #
-          # A GUI executable has no console, and Qt writes its warnings to the
-          # debugger when it thinks there is none; this makes it write to a
-          # file instead, which is the difference between "the interface did
-          # not come up" and knowing why.
-          $env:QT_ASSUME_STDERR_HAS_CONSOLE = '1'
-          $guiErr = Join-Path $env:RUNNER_TEMP 'gui.err.txt'
+          Write-Host '==> opening the interface'
           $app = Start-Process -FilePath $exe -PassThru `
-              -RedirectStandardError $guiErr `
+              -RedirectStandardOutput $out -RedirectStandardError $err `
               -ArgumentList $music, '--database', (Join-Path $env:RUNNER_TEMP 'gui.db')
           Start-Sleep -Seconds 10
           $app.Refresh()
           if ($app.HasExited) {
-              Get-Content -LiteralPath $guiErr -ErrorAction SilentlyContinue | Write-Host
+              Get-Content -LiteralPath $err -ErrorAction SilentlyContinue | Write-Host
               Write-Host 'QML modules in the installed copy:'
               Get-ChildItem -LiteralPath (Join-Path $install 'qml') -Recurse -Filter 'qmldir' -ErrorAction SilentlyContinue |
                   ForEach-Object { Write-Host "    $($_.Directory.FullName.Replace($install, ''))" }
               throw "the interface did not come up (exit $($app.ExitCode))"
           }
+          Write-Host '    still up after ten seconds'
           $app.Kill()
 
       - name: Upload the installer

@@ -193,11 +193,16 @@ Invoke-Checked $windeployqt @(
 # a missing DLL is a silent failure to start, not an error message.
 Write-Host '==> library closure'
 $copied = New-Object System.Collections.Generic.List[string]
+$missing = New-Object System.Collections.Generic.List[string]
 # Every executable and library in the tree and not only the application: the
 # Qt plugins carry dependencies of their own, and they are deployed into
 # subdirectories of their own. The sqlite driver is the one that matters --
 # it needs libsqlite3-0.dll, nothing else in the package references it, and
 # without it the app starts and cannot open its library index.
+#
+# Each file is walked once, and what it needs while it is being walked: a
+# second pass only to collect what is missing doubles a step that takes
+# minutes on a tree this size.
 $walked = New-Object System.Collections.Generic.HashSet[string]
 for ($pass = 1; $pass -le 4; $pass++) {
     $added = 0
@@ -205,6 +210,11 @@ for ($pass = 1; $pass -le 4; $pass++) {
                  Where-Object { $_.Extension -in '.exe', '.dll' }) {
         if (-not $walked.Add($binary.FullName)) { continue }
         foreach ($line in (& $ntldd -R $binary.FullName)) {
+            if ($line -match 'not found') {
+                $needed = ($line -replace '\s*=>.*', '').Trim()
+                if ($needed -and $needed -notmatch '^(api-ms-|ext-ms-)') { $missing.Add($needed) }
+                continue
+            }
             if ($line -notmatch '=>\s*([A-Za-z]:\\[^()]+?)\s*\(0x') { continue }
             $resolved = $Matches[1].Trim()
             if (-not $resolved.StartsWith($Bin, [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -220,15 +230,7 @@ for ($pass = 1; $pass -le 4; $pass++) {
 }
 $copied | Sort-Object -Unique | ForEach-Object { Write-Host "    + $_" }
 
-$unresolved = @(
-    Get-ChildItem -LiteralPath (Join-Path $DistDir 'bin') -Recurse -File |
-        Where-Object { $_.Extension -in '.exe', '.dll' } |
-        ForEach-Object { & $ntldd -R $_.FullName } |
-        Select-String -Pattern 'not found' -SimpleMatch |
-        ForEach-Object { ($_.Line -replace '\s*=>.*', '').Trim() } |
-        Where-Object { $_ -and $_ -notmatch '^(api-ms-|ext-ms-)' } |
-        Sort-Object -Unique
-)
+$unresolved = @($missing | Sort-Object -Unique)
 if ($unresolved.Count -gt 0) {
     Write-Warning "ntldd could not resolve: $($unresolved -join ', ')"
 }
