@@ -180,6 +180,15 @@ jobs:
         env:
           LINUXDEPLOY_OUTPUT_VERSION: ${{ inputs.version }}
           APPIMAGE_EXTRACT_AND_RUN: 1
+          # linuxdeploy-plugin-qt deploys libqxcb.so on its own, and this is
+          # the one it has to be asked for by name: `cadenza --scan` opens a
+          # QGuiApplication like everything else, and a machine with no
+          # display has no xcb to fall back on.
+          EXTRA_PLATFORM_PLUGINS: libqoffscreen.so
+          # The application's QML is compiled into the binary, so the plugin
+          # has nothing to scan unless it is told where the sources are: what
+          # it looks for is the modules they import.
+          QML_SOURCES_PATHS: ${{ github.workspace }}/src/ui
         run: |
           set -euo pipefail
           packaging/linux/build-appimage.sh
@@ -216,7 +225,7 @@ jobs:
                   exit 1
               }
           done
-          for plugin in libqsqlite.so libqoffscreen.so QtQuick/Controls/Basic/qmldir; do
+          for plugin in libqsqlite.so libqxcb.so libqoffscreen.so QtQuick/Controls/Basic/qmldir; do
               find squashfs-root -path "*${plugin}" | grep -q . || {
                   echo "error: ${plugin} is not inside the AppImage" >&2
                   exit 1
@@ -261,13 +270,16 @@ jobs:
 
           # The window: a missing QML module or a plugin the engine cannot
           # load makes it fail and the process exit, so being alive after
-          # twenty seconds is the assertion.
+          # twenty seconds is the assertion -- and its own output is what says
+          # which module it was, when it is not.
           status=0
-          timeout --signal=TERM 20 "${app[@]}" "${work}/music" --database "${work}/gui.db" || status=$?
-          [[ "${status}" -eq 124 ]] || {
+          timeout --signal=TERM 20 "${app[@]}" "${work}/music" --database "${work}/gui.db" \
+              >"${work}/gui.log" 2>&1 || status=$?
+          if [[ "${status}" -ne 124 ]]; then
+              sed 's/^/    /' "${work}/gui.log" >&2 || true
               echo "error: the interface did not come up (exit ${status})" >&2
               exit 1
-          }
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
