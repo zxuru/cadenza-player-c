@@ -69,6 +69,10 @@ jobs:
           {
               echo "QT_ROOT_DIR=${qt_root}"
               echo "CMAKE_PREFIX_PATH=${qt_root}"
+              # linuxdeploy resolves the executable's dependencies with the
+              # loader, and Qt lives in a prefix the loader does not know:
+              # without this it fails on the first Qt library it meets.
+              echo "LD_LIBRARY_PATH=${qt_root}/lib"
               # build-appimage.sh hands this to linuxdeploy-plugin-qt, which
               # asks qmake where Qt is instead of guessing.
               echo "QMAKE=${qt_root}/bin/qmake6"
