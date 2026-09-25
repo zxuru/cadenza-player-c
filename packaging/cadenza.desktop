@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Cadenza
+GenericName=Music Player
+Comment=Play music from your local library
+Exec=cadenza %U
+Icon=cadenza
+Terminal=false
+Categories=AudioVideo;Audio;Player;Qt;
+Keywords=music;audio;player;flac;mp3;ogg;opus;library;
+StartupNotify=true
+StartupWMClass=cadenza

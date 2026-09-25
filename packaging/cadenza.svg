@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    The application's icon, in one file: the launcher draws it, the window icon
+    is rendered from it, and the sidebar shows the same drawing, so there is no
+    second copy to keep in step.
+
+    It is made of the application's own material. The tile is the window: violet
+    glass over the void, lit from the top left, with a light border. The bloom
+    behind the note is the record lighting the pane. The mark is a quaver whose
+    flag is a cadenza, the flourish a soloist sweeps at the end of a movement,
+    curling down to the dot the interface punctuates its own name with.
+  -->
+  <defs>
+    <linearGradient id="tile" gradientUnits="userSpaceOnUse" x1="120" y1="40" x2="430" y2="500">
+      <stop offset="0" stop-color="#2E2160"/>
+      <stop offset="0.45" stop-color="#160F33"/>
+      <stop offset="1" stop-color="#0A0812"/>
+    </linearGradient>
+
+    <!-- The light the note stands in, and the pool it casts around the dot. -->
+    <radialGradient id="bloom" gradientUnits="userSpaceOnUse" cx="250" cy="300" r="215">
+      <stop offset="0" stop-color="#A87BFF" stop-opacity="0.26"/>
+      <stop offset="0.55" stop-color="#7C4FE0" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#7C4FE0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="spark" gradientUnits="userSpaceOnUse" cx="386" cy="330" r="120">
+      <stop offset="0" stop-color="#C6A5FF" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#C6A5FF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- One light source for the whole mark: Theme.accent, lit and deepened.
+         userSpaceOnUse, so the stem, the flag and the head are shaded as one
+         object rather than each getting its own gradient. -->
+    <linearGradient id="note" gradientUnits="userSpaceOnUse" x1="170" y1="130" x2="440" y2="450">
+      <stop offset="0" stop-color="#DCCBFF"/>
+      <stop offset="0.45" stop-color="#AC81FF"/>
+      <stop offset="1" stop-color="#7C4FE0"/>
+    </linearGradient>
+
+    <!-- The sheen the glass catches along its top edge. -->
+    <linearGradient id="sheen" gradientUnits="userSpaceOnUse" x1="0" y1="16" x2="0" y2="290">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- The pane. -->
+  <rect x="16" y="16" width="480" height="480" rx="118" fill="url(#tile)"/>
+  <ellipse cx="250" cy="300" rx="208" ry="200" fill="url(#bloom)"/>
+  <path d="M16 290 V134 A118 118 0 0 1 134 16 H378 A118 118 0 0 1 496 134 V290 Z"
+        fill="url(#sheen)"/>
+  <rect x="17" y="17" width="478" height="478" rx="117" fill="none"
+        stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="2"/>
+
+  <!-- The mark, a touch larger than it is drawn so it fills the tile the way
+       the panes fill the window. -->
+  <g transform="translate(-12.8 -13.4) scale(1.05)">
+    <ellipse cx="386" cy="330" rx="118" ry="112" fill="url(#spark)"/>
+    <rect x="254" y="140" width="26" height="262" rx="13" fill="url(#note)"/>
+    <ellipse cx="196" cy="394" rx="74" ry="52" transform="rotate(-26 196 394)"
+             fill="url(#note)"/>
+    <!-- The flag: a tapered ribbon, thin at the tip and full where it leaves
+         the stem, so it reads as a stroke made in one movement. -->
+    <path d="M 285.2 222.9 C 289.1 215.7 298.8 192.3 308.7 179.7
+             C 318.5 167.2 330.7 151.9 344.5 147.6
+             C 358.3 143.3 377.4 147.4 391.3 153.7
+             C 405.2 160.1 418.4 172.8 427.9 185.6
+             C 437.3 198.3 444.8 214.7 447.8 230.3
+             C 450.9 245.8 448.7 263 446 278.9
+             C 443.4 294.9 434.3 318.2 432 326
+             C 437.9 316.1 460.5 287.9 467.7 266.8
+             C 474.9 245.6 478.5 220.8 475.1 199.1
+             C 471.7 177.3 461 153.6 447.1 136.4
+             C 433.1 119.1 412.1 103.1 391.6 95.8
+             C 371 88.4 344.7 86.6 323.9 92.3
+             C 303.1 98 282.3 113.9 266.8 130
+             C 251.3 146.1 236.8 179.3 230.8 189.1 Z"
+          fill="url(#note)"/>
+    <circle cx="386" cy="330" r="31" fill="#C6A5FF"/>
+  </g>
+</svg>

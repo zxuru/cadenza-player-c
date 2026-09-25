@@ -1,0 +1,48 @@
+# Build trees
+build/
+build-*/
+cmake-build-*/
+
+# CMake
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+CPackConfig.cmake
+CPackSourceConfig.cmake
+
+# Packaging output
+*.AppImage
+*.flatpak
+dist/
+
+# Staged helper tools: tens of megabytes fetched per platform by
+# packaging/tools/fetch-tools.sh (Linux) and packaging/tools/fetch-tools.ps1
+# (Windows, where the names carry a .exe that the *.exe rule below already
+# covers), never committed. The scripts themselves are.
+packaging/tools/yt-dlp
+packaging/tools/qjs
+packaging/tools/ffmpeg
+packaging/tools/*.part
+
+# Editors
+.vscode/
+.idea/
+*.user
+*.kate-swp
+*~
+
+# Objects and libraries that should never be committed
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+
+# Qt generated QML caches
+*.qmlc
+*.jsc
