@@ -1,15 +1,11 @@
 name: CI
 
-# Every push to main and every pull request builds the AppImage and runs the
-# smoke test on it, so a break is caught on the branch instead of on the tag.
-#
-# Linux only, and without ffmpeg: it is the fast half of what a release does,
-# and the release builds both platforms in full anyway.
+# Pull requests only: a push to main is what release.yml is for, and it builds
+# both platforms and tests them there. This is the same Linux job without
+# ffmpeg, which is the fast half of that, so a branch knows it is broken
+# before it is merged.
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
   workflow_dispatch:
 

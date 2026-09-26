@@ -625,7 +625,7 @@ void LyricsProvider::startOnline()
     // one that gets rate limited.
     request.setHeader(QNetworkRequest::UserAgentHeader,
                       QStringLiteral("Cadenza " CADENZA_VERSION
-                                     " (https://github.com/zxuru/cadenza)"));
+                                     " (https://github.com/zxuru/cadenza-player-c)"));
     request.setTransferTimeout(10000);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);

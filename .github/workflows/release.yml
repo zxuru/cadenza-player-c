@@ -1,74 +1,84 @@
 name: Release
 
-# A release is a tag: push v1.0.1 and this builds both platforms, tests what
-# they produced, and publishes the three files users download plus a
-# SHA256SUMS beside them.
+# Every push to main publishes a release, so the newest release is always the
+# code that was pushed last; a tag publishes the version it carries. The
+# version is stamped into both builds, which is what lets a copy say which
+# release it came from.
+#
+#   push to main   v<major>.<minor>.<run number>   the patch is the run number,
+#                                                  which only ever grows
+#   tag v1.2.3     v1.2.3                          the version in the tag
 #
 # The build itself lives in the two platform workflows, which also run by hand
-# from the Actions tab when only the artifact is wanted.
-#
-# Run by hand, this builds both platforms and checks what they produced the
-# way a tag would -- the names, the set, the hashes -- and publishes nothing:
-# publishing takes the tag, and there is no tag on a branch.
+# from the Actions tab when only the artifact is wanted. Run by hand, this one
+# builds and checks and publishes nothing.
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+    # A commit that rewrites prose does not need two runners. Tags are exempt
+    # from path filters, so a release still builds everything.
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 'Publish a release. Only valid when run from a tag.'
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 jobs:
-  # The version in the tag is what the filenames, the installer and the About
-  # box will say, and the version in CMakeLists.txt is what the binary
-  # reports. A release where the two disagree is one where `--version` answers
-  # with a number nobody can find on the release page.
   version:
     runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.read.outputs.version }}
-      publishing: ${{ steps.read.outputs.publishing }}
+      version: ${{ steps.number.outputs.version }}
+      tag: ${{ steps.number.outputs.tag }}
+      publish: ${{ steps.number.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
 
-      - id: read
-        name: Read the version and check it against the tag
+      # The patch is the run number, which only grows: no two builds of the
+      # same base version are ordered randomly, which is what telling a newer
+      # release from an older one needs.
+      - id: number
+        name: Work out the version this run publishes
         run: |
           set -euo pipefail
 
-          source_version="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$/\1/p' \
-              CMakeLists.txt | head -1)"
-          if [[ -z "${source_version}" ]]; then
-              echo 'error: no version in the project() call of CMakeLists.txt' >&2
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+              version="${GITHUB_REF_NAME#v}"
+          else
+              base="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$/\1/p' \
+                  CMakeLists.txt | head -1)"
+              if [[ -z "${base}" ]]; then
+                  echo 'error: no version in the project() call of CMakeLists.txt' >&2
+                  exit 1
+              fi
+              version="${base%.*}.${GITHUB_RUN_NUMBER}"
+          fi
+
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "error: '${version}' is not a version of the form 1.2.3" >&2
               exit 1
           fi
 
-          if [[ "${GITHUB_REF_TYPE}" == 'tag' ]]; then
-              tag_version="${GITHUB_REF_NAME#v}"
-              if [[ "${tag_version}" != "${source_version}" ]]; then
-                  echo "error: ${GITHUB_REF_NAME} says ${tag_version}, CMakeLists.txt says ${source_version}" >&2
-                  echo '       bump the VERSION in CMakeLists.txt, or tag that commit' >&2
-                  exit 1
-              fi
-              echo 'publishing=true' >> "$GITHUB_OUTPUT"
-          else
-              if [[ "${{ inputs.publish }}" == 'true' ]]; then
-                  echo 'error: publishing needs a tag: check one out, or leave publish off' >&2
-                  exit 1
-              fi
-              echo "note: ${GITHUB_REF_NAME} is not a tag; building ${source_version}, publishing nothing" >&2
-              echo 'publishing=false' >> "$GITHUB_OUTPUT"
+          publish=false
+          if [[ "${GITHUB_REF}" == refs/tags/v* || "${GITHUB_REF}" == refs/heads/main ]]; then
+              publish=true
           fi
 
-          echo "    version ${source_version}"
-          echo "version=${source_version}" >> "$GITHUB_OUTPUT"
+          {
+              echo "version=${version}"
+              echo "tag=v${version}"
+              echo "publish=${publish}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "    version ${version}" >&2
+          echo "    publishing ${publish}" >&2
+          echo "This run publishes v${version}, testing $( [[ "${publish}" == true ]] && echo 'and publishing' || echo 'only' )" \
+              >> "$GITHUB_STEP_SUMMARY"
 
   linux:
     needs: version
@@ -79,10 +89,12 @@ jobs:
   windows:
     needs: version
     uses: ./.github/workflows/windows.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
 
-  # Runs on a tag and on a hand run alike: what would be published is
-  # collected and hashed either way, and only the release itself is held back
-  # when there is no tag.
+  # Runs on a publishable commit and on a hand run alike: what would be
+  # published is collected and hashed either way, and only the release itself
+  # is held back when this run is not publishing.
   release:
     needs: [version, linux, windows]
     runs-on: ubuntu-24.04
@@ -92,6 +104,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -105,11 +119,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="${{ needs.version.outputs.version }}"
           expected=(
-              "cadenza-${version}-setup.exe"
-              "cadenza-${version}-win64-portable.zip"
-              "cadenza-${version}-x86_64.AppImage"
+              "cadenza-${VERSION}-setup.exe"
+              "cadenza-${VERSION}-win64-portable.zip"
+              "cadenza-${VERSION}-x86_64.AppImage"
           )
 
           for name in "${expected[@]}"; do
@@ -134,11 +147,11 @@ jobs:
           echo "EXPECTED_ASSETS=${expected[*]}" >> "$GITHUB_ENV"
 
       - name: Publish
-        if: needs.version.outputs.publishing == 'true'
+        if: needs.version.outputs.publish == 'true'
         run: |
           set -euo pipefail
 
-          version="${{ needs.version.outputs.version }}"
+          version="${VERSION}"
           # Prepended to the generated notes: the release page is where a user
           # finds out which of the three files is theirs.
           cat > notes.md <<EOF
@@ -156,27 +169,41 @@ jobs:
           -- see [packaging/macos](https://github.com/${GH_REPO}/blob/main/packaging/macos/README.md).
           EOF
 
-          gh release create "${GITHUB_REF_NAME}" \
-              --title "Cadenza ${version}" \
-              --verify-tag \
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+              # A rerun of the same version: the release is already there, and
+              # what it carries is what this run just built.
+              gh release upload "${TAG}" --clobber dist/cadenza-* dist/SHA256SUMS
+              exit 0
+          fi
+
+          # On a push the tag does not exist yet: the release creates it, at
+          # the commit this run built. A tag push brought its own.
+          target=()
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+              target=(--target "${GITHUB_SHA}")
+          fi
+
+          gh release create "${TAG}" \
+              --title "Cadenza v${version}" \
               --generate-notes \
               --notes-file notes.md \
               --latest \
+              "${target[@]}" \
               dist/cadenza-* dist/SHA256SUMS
 
       # What was published, read back: an upload that quietly dropped a file
       # is the kind of failure a release page shows the world.
       - name: Check what the release carries
-        if: needs.version.outputs.publishing == 'true'
+        if: needs.version.outputs.publish == 'true'
         run: |
           set -euo pipefail
           # shellcheck disable=SC2086  # EXPECTED_ASSETS is a space-separated list
           want="$(printf '%s\n' ${EXPECTED_ASSETS} SHA256SUMS | sort | xargs)"
-          got="$(gh release view "${GITHUB_REF_NAME}" --json assets \
+          got="$(gh release view "${TAG}" --json assets \
               --jq '[.assets[].name] | sort | join(" ")')"
           if [[ "${got}" != "${want}" ]]; then
               echo "error: the release carries '${got}', expected '${want}'" >&2
               exit 1
           fi
           echo "    ${got}"
-          echo "    https://github.com/${GH_REPO}/releases/tag/${GITHUB_REF_NAME}"
+          echo "    https://github.com/${GH_REPO}/releases/tag/${TAG}"

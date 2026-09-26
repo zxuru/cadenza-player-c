@@ -19,6 +19,9 @@
 #   -Msys2          MSYS2 root (default C:\msys64)
 #   -BuildDir        -DistDir   where the build and the package land
 #                   (default <repo>\build-windows and <repo>\dist)
+#   -Version        the version the binary reports and the files are named
+#                   after (default: the one in CMakeLists.txt). The release
+#                   workflow stamps the release it is publishing here.
 #   -SkipTools      do not stage tools\ -- no yt-dlp, no music search
 #   -SkipFfmpeg     stage the tools without ffmpeg: downloads then land in the
 #                   container YouTube served, untagged, and the installer is
@@ -31,6 +34,7 @@ param(
     [string]$Msys2 = 'C:\msys64',
     [string]$BuildDir,
     [string]$DistDir,
+    [string]$Version,
     [switch]$SkipTools,
     [switch]$SkipFfmpeg,
     [switch]$SkipInstaller,
@@ -116,6 +120,12 @@ function Get-ProjectVersion
     return $Matches[1]
 }
 
+# The version this build reports, and the one the installer, the zip and the
+# binary are named after. -Version is what the release workflow stamps in; a
+# build made by hand reports what CMakeLists.txt says.
+$version = if ($Version) { $Version } else { Get-ProjectVersion }
+Write-Host "==> version $version"
+
 # ---------------------------------------------------------------------------
 # 1. The helper tools the app runs
 # ---------------------------------------------------------------------------
@@ -152,6 +162,7 @@ Invoke-Checked $cmake (@(
         '-B', $BuildDir,
         '-G', 'Ninja',
         '-DCMAKE_BUILD_TYPE=Release',
+        "-DCADENZA_VERSION=$version",
         "-DCMAKE_PREFIX_PATH=$Ucrt64"
     ) + $pkgArgs)
 
@@ -250,7 +261,6 @@ foreach ($pattern in 'libmpv*.dll', 'libtag*.dll') {
 # 4. The one file to download
 # ---------------------------------------------------------------------------
 
-$version = Get-ProjectVersion
 $artifacts = New-Object System.Collections.Generic.List[string]
 
 if (-not $SkipInstaller) {

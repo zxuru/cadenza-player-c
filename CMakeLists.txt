@@ -3,9 +3,16 @@ cmake_minimum_required(VERSION 3.21)
 project(cadenza
     VERSION 1.0.0
     DESCRIPTION "A local-files music player"
-    HOMEPAGE_URL "https://github.com/zxuru/cadenza"
+    HOMEPAGE_URL "https://github.com/zxuru/cadenza-player-c"
     LANGUAGES CXX
 )
+
+# What the binary reports as its version, and what the installers and the
+# packaging scripts name their files after. The release workflow stamps the
+# version it is publishing here -- the number in a tag, or the run number a
+# push to main publishes -- so an installed copy can say which release it came
+# from. A build that does not pass it reports the one above.
+set(CADENZA_VERSION "${PROJECT_VERSION}" CACHE STRING "Version the binary reports")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -153,7 +160,7 @@ qt_add_qml_module(cadenza
 
 target_include_directories(cadenza PRIVATE src)
 
-target_compile_definitions(cadenza PRIVATE CADENZA_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(cadenza PRIVATE CADENZA_VERSION="${CADENZA_VERSION}")
 
 target_link_libraries(cadenza PRIVATE
     Qt6::Core

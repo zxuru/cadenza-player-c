@@ -14,12 +14,19 @@ name: Windows
 on:
   workflow_call:
     inputs:
+      version:
+        description: 'Version the binary reports and the files are named after'
+        type: string
+        default: ''
       no_ffmpeg:
         description: 'Leave ffmpeg out (smaller installer, untagged downloads)'
         type: boolean
         default: false
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version the binary reports (default: the one in CMakeLists.txt)'
+        default: ''
       no_ffmpeg:
         description: 'Leave ffmpeg out (smaller installer, untagged downloads)'
         type: boolean
@@ -99,11 +106,24 @@ jobs:
           # installation does not necessarily land on that path.
           $msys2 = '${{ steps.msys2.outputs.msys2-location }}'
 
+          # The version this release publishes. Empty on a hand run, and then
+          # the script falls back to the one in CMakeLists.txt -- which is
+          # also the version the checks below expect to see reported.
+          $version = '${{ inputs.version }}'
+          if (-not $version) {
+              $source = Get-Content -LiteralPath 'CMakeLists.txt' -Raw
+              if ($source -notmatch 'project\(\s*cadenza\s+VERSION\s+([0-9][0-9.]*)') {
+                  throw 'no version in CMakeLists.txt'
+              }
+              $version = $Matches[1]
+          }
+          "CADENZA_VERSION=$version" >> $env:GITHUB_ENV
+
           # A hashtable and not an array: splatting '-Portable' as an array
           # element hands it to the script as a positional value, which is how
           # it ended up in -Msys2 and the build went looking for
           # '-Portable\ucrt64\bin\cmake.exe'.
-          $arguments = @{ Portable = $true }
+          $arguments = @{ Portable = $true; Version = $version }
           if ('${{ inputs.no_ffmpeg }}' -eq 'true') { $arguments.SkipFfmpeg = $true }
 
           if ($msys2) { ./packaging/windows/build.ps1 -Msys2 $msys2 @arguments }
@@ -148,6 +168,10 @@ jobs:
           # work" and knowing why.
           $env:QT_ASSUME_STDERR_HAS_CONSOLE = '1'
 
+          # TEMPORARY: why the engine cannot find QtQuick.Controls' plugin.
+          $env:QML_IMPORT_TRACE = '1'
+          $env:QT_DEBUG_PLUGINS = '1'
+
           # The window, out of whichever tree is given: staying up for ten
           # seconds is the assertion, because a missing QML module or a plugin
           # the engine cannot load makes it fail and the process exit. What it
@@ -167,7 +191,7 @@ jobs:
                   $app.Kill()
                   return
               }
-              Get-Content -LiteralPath $err -ErrorAction SilentlyContinue | Write-Host
+              Get-Content -LiteralPath $err -Tail 40 -ErrorAction SilentlyContinue | Write-Host
               Write-Host '    qml\QtQuick\Controls:'
               Get-ChildItem -LiteralPath (Join-Path $tree 'qml\QtQuick\Controls') -ErrorAction SilentlyContinue |
                   ForEach-Object { Write-Host "        $($_.Name)" }
@@ -182,6 +206,14 @@ jobs:
           # and nothing else in the package references it.
           $payload = Join-Path (Resolve-Path 'dist\bin').Path 'cadenza.exe'
           Invoke-Cadenza -Exe $payload -Arguments @('--version')
+          # The stamp, checked: a build that reported the version in
+          # CMakeLists.txt instead of the one this release publishes is one
+          # that says it is older than it is, to anyone reading `--version`.
+          $reported = (Get-Content -LiteralPath $out -Raw -ErrorAction SilentlyContinue)
+          Write-Host "    reports: $($reported.Trim())"
+          if ($reported -notmatch [regex]::Escape($env:CADENZA_VERSION)) {
+              throw "the build reports '$($reported.Trim())', not $env:CADENZA_VERSION"
+          }
           Invoke-Cadenza -Exe $payload -Arguments @('--scan', $music,
               '--database', (Join-Path $env:RUNNER_TEMP 'payload.db'))
           Test-Interface -Exe $payload -Database (Join-Path $env:RUNNER_TEMP 'payload-gui.db')

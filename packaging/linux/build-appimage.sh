@@ -26,9 +26,18 @@ for tool in linuxdeploy linuxdeploy-plugin-qt; do
 done
 
 echo "==> configuring"
-cmake -S "${repo_root}" -B "${build_dir}" \
-    -DCMAKE_BUILD_TYPE=Release \
+# The release workflow stamps the version it publishes into the binary; a
+# build made by hand reports the one in CMakeLists.txt. Either way the file
+# is named after it, below.
+cmake_args=(
+    -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_INSTALL_PREFIX=/usr
+)
+if [[ -n "${CADENZA_VERSION:-}" ]]; then
+    cmake_args+=("-DCADENZA_VERSION=${CADENZA_VERSION}")
+fi
+
+cmake -S "${repo_root}" -B "${build_dir}" "${cmake_args[@]}"
 
 echo "==> building"
 cmake --build "${build_dir}" --parallel "$(nproc)"

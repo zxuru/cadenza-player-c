@@ -180,6 +180,10 @@ jobs:
         env:
           LINUXDEPLOY_OUTPUT_VERSION: ${{ inputs.version }}
           APPIMAGE_EXTRACT_AND_RUN: 1
+          # What the binary reports, and what the file is named after: one
+          # number, so the smoke test below can check the two against each
+          # other and a release cannot ship a build that says something else.
+          CADENZA_VERSION: ${{ inputs.version }}
           # linuxdeploy-plugin-qt deploys libqxcb.so on its own, and this is
           # the one it has to be asked for by name: `cadenza --scan` opens a
           # QGuiApplication like everything else, and a machine with no

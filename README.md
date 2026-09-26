@@ -408,41 +408,57 @@ FFmpeg dependency inside the sandbox.
 
 ## Releases
 
-A release is a tag, and everything after that is the workflows' job:
+**Every push to `main` publishes a release**, so the newest release is always
+the code that was pushed last, and a tag publishes the version it carries:
+
+| What was pushed | Tag and release | The version the build reports |
+|---|---|---|
+| a commit on `main` | `v<major>.<minor>.<run number>` | the same |
+| a tag `v1.2.3` | `v1.2.3` | the same |
+
+The patch of a push release is the workflow run number, which only ever grows,
+so two builds are never ordered randomly. `major.minor` come from the `VERSION`
+in `CMakeLists.txt`, which is also what a build made by hand reports.
+
+`VERSION` in `CMakeLists.txt` is the *base*, not the release: the workflow
+stamps the number it is publishing into both builds (`-DCADENZA_VERSION`), so
+the binary, the installer, the zip and the AppImage all carry it, and each
+platform's smoke test checks that `--version` answers with it — a build that
+lost its stamp is one that says it is older than it is.
+
+A tag starts the same thing for a deliberate version:
 
 ```bash
-# The tag and the VERSION in CMakeLists.txt carry the same number.
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.2.3
+git push origin v1.2.3
 ```
 
-The tag starts `.github/workflows/release.yml`, which
+`.github/workflows/release.yml` is what runs either way, and
 
-1. refuses to build when the tag and `VERSION` in `CMakeLists.txt` disagree,
-   because the tag is what the filenames, the installer and `--version` will
-   say;
-2. builds the Windows installer and portable zip (`.github/workflows/windows.yml`,
-   on `windows-latest` with MSYS2) and the AppImage
-   (`.github/workflows/linux.yml`, on `ubuntu-24.04`, with Qt fetched from the
-   Qt project since no Ubuntu package meets the 6.5 floor);
+1. works out the version, and refuses anything that is not `major.minor.patch`;
+2. builds the Windows installer and portable zip
+   (`.github/workflows/windows.yml`, on `windows-latest` with MSYS2) and the
+   AppImage (`.github/workflows/linux.yml`, on `ubuntu-24.04`, with Qt fetched
+   from the Qt project since no Ubuntu package meets the 6.5 floor);
 3. tests what was built rather than only that it built — the installer is
    installed silently and the installed copy is opened, and the AppImage is
    unpacked and run with a scrubbed environment, so it has to find the Qt,
    libmpv, TagLib and helper tools inside itself;
 4. publishes a GitHub release named after the tag with those three files and a
    `SHA256SUMS` beside them, then reads the release back to check that all four
-   landed.
+   landed. A rerun of the same version replaces the files it finds rather than
+   failing.
 
 Both platform builds also run by hand from the Actions tab, which is how to get
-an artifact without a tag; a hand run of `release.yml` does everything a tag
-does except publish, the check of what was built included. macOS is the one
-platform with no CI: signing and notarising need a paid Apple account, so
+an artifact without publishing anything; a hand run of `release.yml` does
+everything a push does except publish. macOS is the one platform with no CI:
+signing and notarising need a paid Apple account, so
 `packaging/macos/README.md` is the manual route.
 
 The AppImage links the glibc of the machine that built it — Ubuntu 24.04, glibc
 2.39 — so it wants a 2024-or-newer distribution; Qt, libmpv, TagLib and the
-helper tools are inside the file. Pushes to `main` and pull requests run the same
-Linux job without ffmpeg, which is the fast half of a release.
+helper tools are inside the file. Pull requests run the same Linux job without
+ffmpeg, which is the fast half of a release.
 
 ## Architecture
 
