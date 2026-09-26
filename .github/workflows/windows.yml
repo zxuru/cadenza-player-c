@@ -148,6 +148,33 @@ jobs:
           # work" and knowing why.
           $env:QT_ASSUME_STDERR_HAS_CONSOLE = '1'
 
+          # The window, out of whichever tree is given: staying up for ten
+          # seconds is the assertion, because a missing QML module or a plugin
+          # the engine cannot load makes it fail and the process exit. What it
+          # said before exiting, and what is actually in the module's
+          # directory, is printed when it does not stay up.
+          function Test-Interface {
+              param([string]$Exe, [string]$Database)
+              $tree = Split-Path -Parent $Exe
+              Write-Host "==> opening the interface out of $tree"
+              $app = Start-Process -FilePath $Exe -PassThru `
+                  -RedirectStandardOutput $out -RedirectStandardError $err `
+                  -ArgumentList $music, '--database', $Database
+              Start-Sleep -Seconds 10
+              $app.Refresh()
+              if (-not $app.HasExited) {
+                  Write-Host '    still up after ten seconds'
+                  $app.Kill()
+                  return
+              }
+              Get-Content -LiteralPath $err -ErrorAction SilentlyContinue | Write-Host
+              Write-Host '    qml\QtQuick\Controls:'
+              Get-ChildItem -LiteralPath (Join-Path $tree 'qml\QtQuick\Controls') -ErrorAction SilentlyContinue |
+                  ForEach-Object { Write-Host "        $($_.Name)" }
+              Write-Host "    qt.conf beside the executable: $(Test-Path -LiteralPath (Join-Path $tree 'qt.conf'))"
+              throw "the interface did not come up out of $tree (exit $($app.ExitCode))"
+          }
+
           # The payload first, out of the build tree, because it is the one
           # thing the installer does not change: this is where opening the
           # library index is checked, and it is why the DLL closure is walked
@@ -157,6 +184,7 @@ jobs:
           Invoke-Cadenza -Exe $payload -Arguments @('--version')
           Invoke-Cadenza -Exe $payload -Arguments @('--scan', $music,
               '--database', (Join-Path $env:RUNNER_TEMP 'payload.db'))
+          Test-Interface -Exe $payload -Database (Join-Path $env:RUNNER_TEMP 'payload-gui.db')
 
           $setup = Get-ChildItem dist\cadenza-*-setup.exe | Select-Object -First 1
           if (-not $setup) { throw 'no installer was built' }
@@ -189,34 +217,22 @@ jobs:
           # windeployqt puts them: the platform plugin Qt loads before
           # anything else, the sqlite driver behind the library index, the
           # JPEG decoder behind every cover, the Windows TLS backend behind
-          # the lyrics lookup, and the Basic style the interface asks for.
+          # the lyrics lookup, and the QML module behind every control the
+          # interface draws -- the .qml files and the plugin next to them,
+          # which is what the engine loads by name.
           foreach ($file in 'platforms\qwindows.dll', 'sqldrivers\qsqlite.dll',
                             'imageformats\qjpeg.dll', 'tls\qschannelbackend.dll',
+                            'qml\QtQuick\Controls\qtquickcontrols2plugin.dll',
                             'qml\QtQuick\Controls\Basic\qmldir') {
               if (-not (Test-Path -LiteralPath (Join-Path $install $file))) {
                   throw "$file is missing from the installed copy"
               }
           }
 
-          # The window itself: a missing QML module makes the engine fail and
-          # the process exit, so staying alive for ten seconds is the
-          # assertion. The runner has a session, so it is the real platform
+          # The same window, out of the installed copy: the installer's own
+          # question. The runner has a session, so it is the real platform
           # plugin doing the work -- only qwindows.dll is deployed.
-          Write-Host '==> opening the interface'
-          $app = Start-Process -FilePath $exe -PassThru `
-              -RedirectStandardOutput $out -RedirectStandardError $err `
-              -ArgumentList $music, '--database', (Join-Path $env:RUNNER_TEMP 'gui.db')
-          Start-Sleep -Seconds 10
-          $app.Refresh()
-          if ($app.HasExited) {
-              Get-Content -LiteralPath $err -ErrorAction SilentlyContinue | Write-Host
-              Write-Host 'QML modules in the installed copy:'
-              Get-ChildItem -LiteralPath (Join-Path $install 'qml') -Recurse -Filter 'qmldir' -ErrorAction SilentlyContinue |
-                  ForEach-Object { Write-Host "    $($_.Directory.FullName.Replace($install, ''))" }
-              throw "the interface did not come up (exit $($app.ExitCode))"
-          }
-          Write-Host '    still up after ten seconds'
-          $app.Kill()
+          Test-Interface -Exe $exe -Database (Join-Path $env:RUNNER_TEMP 'gui.db')
 
       - name: Upload the installer
         uses: actions/upload-artifact@v4
